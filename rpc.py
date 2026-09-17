@@ -5,19 +5,21 @@ A module to handle RPC calls to the BOINC client.
 import hashlib
 import logging
 import socket
-import xml
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger("boinc-fleet.rpc")
 
 # The byte sequence BOINC uses to indicate the end of a message in RPC communication.
 END_TXT = b"\003"
+# The default port BOINC listens to for RPC connections.
+DEFAULT_PORT = 31416
 
 class BOINCClient:
     """
     A class to represent a BOINC client and handle RPC calls.
     """
 
-    def __init__(self, host: str, port: int, timeout: int = 30, password: str = ""):
+    def __init__(self, host: str, port: int = DEFAULT_PORT, timeout: int = 30, password: str = ""):
         """
         Initialize the BOINCClient with the specified parameters.
 
@@ -25,8 +27,8 @@ class BOINCClient:
         ----------
         host : str
             The hostname or IPv4 address of the BOINC client.
-        port : int
-            The port number of the BOINC client.
+        port : int, optional
+            The port number of the BOINC client, by default 31416.
         timeout : int, optional
             The timeout in seconds for the connection attempt (default is 30 seconds).
         password : str, optional
@@ -103,7 +105,7 @@ class BOINCClient:
             logger.error(f"Failure while receiving response: {e}")
             raise
 
-    def _rpc_call(self, message: str) -> xml.etree.ElementTree.Element:
+    def _rpc_call(self, message: str) -> ET.Element:
         """
         Perform an RPC call to the BOINC client.
 
@@ -114,7 +116,7 @@ class BOINCClient:
 
         Returns
         -------
-        xml.etree.ElementTree.Element
+        ET.Element
             The response received from the BOINC client, parsed as an XML element.
         """
         self._send(message)
@@ -122,9 +124,9 @@ class BOINCClient:
         if not reply:
             raise RuntimeError("No response received from BOINC client.")
 
-        return xml.etree.ElementTree.fromstring(reply)
+        return ET.fromstring(reply)
 
-    def request(self, command: str) -> xml.etree.ElementTree.Element:
+    def request(self, command: str) -> ET.Element:
         """
         Send a no-argument request to the BOINC client and receive a response.
 
@@ -135,7 +137,7 @@ class BOINCClient:
 
         Returns
         -------
-        xml.etree.ElementTree.Element
+        ET.Element
             The response received from the BOINC client, parsed as an XML element.
         """
         return self._rpc_call(f"<{command}/>")
@@ -162,3 +164,22 @@ class BOINCClient:
 
         if reply.find("authorized") is None:
             raise PermissionError("authentication failed — wrong RPC password?")
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+
+    # Get the password from the local machine, which is the whole auth file.
+    password = Path("/var/lib/boinc-client/gui_rpc_auth.cfg").read_text().strip()
+
+    # Example usage of the BOINCClient class
+    client = BOINCClient(host="127.0.0.1", password=password)
+    try:
+        client.connect()
+        client.authenticate()
+        print("authenticated \u2713\n")
+        print(ET.tostring(client.request("get_cc_status"), encoding="unicode"))
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+    finally:
+        client.close()
