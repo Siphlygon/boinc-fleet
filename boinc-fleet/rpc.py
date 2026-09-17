@@ -22,7 +22,7 @@ class BOINCClient:
 
     def __init__(self, host: str, port: int = DEFAULT_PORT, timeout: int = 30, password: str = ""):
         """
-        Initialize the BOINCClient with the specified parameters.
+        Initialise the BOINCClient with the specified parameters.
 
         Parameters
         ----------
@@ -156,15 +156,19 @@ class BOINCClient:
         PermissionError
             If authentication fails due to an incorrect password.
         """
-        # Ask for the nonce from the BOINC client
-        nonce = self._rpc_call("<auth1/>").findtext("nonce")
+        try:
+            # Ask for the nonce from the BOINC client
+            nonce = self._rpc_call("<auth1/>").findtext("nonce")
 
-        # Compute the hash of the nonce and password, and send it back to the BOINC client for verification
-        digest = hashlib.md5((nonce + self.password).encode()).hexdigest()
-        reply = self._rpc_call(f"<auth2><nonce_hash>{digest}</nonce_hash></auth2>")
+            # Compute the hash of the nonce and password, and send it back to the BOINC client for verification
+            digest = hashlib.md5((nonce + self.password).encode()).hexdigest()
+            reply = self._rpc_call(f"<auth2><nonce_hash>{digest}</nonce_hash></auth2>")
 
-        if reply.find("authorized") is None:
-            raise PermissionError("authentication failed — wrong RPC password?")
+            if reply.find("authorized") is None:
+                raise PermissionError("authentication failed — wrong RPC password?")
+        except Exception as e:
+            logger.error(f"Authentication request failed: {e}")
+            raise
 
 
 if __name__ == "__main__":
@@ -178,8 +182,10 @@ if __name__ == "__main__":
     try:
         client.connect()
         client.authenticate()
-        print("authenticated \u2713\n")
-        print(ET.tostring(client.request("get_cc_status"), encoding="unicode"))
+        logger.info("authenticated \u2713\n")
+
+        response = ET.tostring(client.request("get_cc_status"), encoding="unicode")
+        logger.info(f"CC Status:\n {response}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
