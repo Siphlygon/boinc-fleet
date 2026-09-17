@@ -6,7 +6,7 @@ import hashlib
 import socket
 import xml.etree.ElementTree as ET
 
-from logger import get_logger
+from .logger import get_logger
 
 logger = get_logger("boinc-fleet.rpc")
 

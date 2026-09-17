@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boinc-fleet"
+version = "0.1.0"
+dependencies = []
+authors = [
+  {name = "Ashley Parr", email = "ashley.parr@protonmail.com"},
+]
+description = "Diffusion for Radio-loud AGN Completeness Corrections"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICEN[CS]E.*"]
+
+[project.urls]
+Repository = "https://github.com/Siphlygon/boinc-fleet"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["boinc-fleet*"]
+exclude = ["docs*", "tests*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+diffracc = ["*.toml", "*.dat"]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
