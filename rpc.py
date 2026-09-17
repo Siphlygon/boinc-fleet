@@ -3,11 +3,12 @@ A module to handle RPC calls to the BOINC client.
 """
 
 import hashlib
-import logging
 import socket
 import xml.etree.ElementTree as ET
 
-logger = logging.getLogger("boinc-fleet.rpc")
+from logger import get_logger
+
+logger = get_logger("boinc-fleet.rpc")
 
 # The byte sequence BOINC uses to indicate the end of a message in RPC communication.
 END_TXT = b"\003"
