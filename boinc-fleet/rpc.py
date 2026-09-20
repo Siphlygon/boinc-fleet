@@ -68,9 +68,9 @@ class BOINCClient:
             The message to send.
         """
         if not self.socket:
-            raise RuntimeError("Not connected to BOINC client.")
+            raise RuntimeError("Not connected to BOINC client. Call connect() before sending messages.")
         try:
-            message = f"<boinc_gpu_rpc_request>\n{message}\n</boinc_gpu_rpc_request>"
+            message = f"<boinc_gui_rpc_request>\n{message}\n</boinc_gui_rpc_request>"
             self.socket.sendall(message.encode('utf-8') + END_TXT)
             logger.debug(f"Sent message: {message}")
         except Exception as e:
@@ -89,7 +89,7 @@ class BOINCClient:
             The response received from the BOINC client.
         """
         if not self.socket:
-            raise RuntimeError("Not connected to BOINC client.")
+            raise RuntimeError("Not connected to BOINC client. Call connect() before receiving messages.")
         try:
             response = b""
             while True:
