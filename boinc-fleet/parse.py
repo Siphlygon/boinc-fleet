@@ -10,70 +10,24 @@ import builtins
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from .logger import get_logger
 
 logger = get_logger("boinc-fleet.parse")
 
 
-def _convert_xml_value(value: str | None, annotation: Any) -> Any:
+@dataclass
+class Coproc:
     """
-    Convert XML text to the type declared by a dataclass field.
-
-    Used to dynamically convert XML text to the type declared by a dataclass field. This function handles basic types
-    like str, int, float, and bool, as well as optional types (Union with None).
-    
-    Parameters
-    ----------
-    value : str | None
-        The XML text to convert. Can be None if the XML element is missing or empty.
-    annotation : Any
-        The type annotation of the dataclass field. This can be a basic type or a Union with None for optional fields.
-    
-    Returns
-    -------
-    Any
-        The converted value, which will be of the type specified by the annotation. If the value is None, it will
-        return None. If the value cannot be converted to the specified type, a ValueError will be raised.
+    A class to represent a coprocessor (e.g., GPU) from the BOINC client.
     """
-    if value is None:
-        return None
-
-    origin = get_origin(annotation)
-    if origin in (Union, UnionType):
-        annotation = next(
-            (option for option in get_args(annotation) if option is not type(None)),
-            str,
-        )
-
-    if annotation is str or annotation is Any:
-        return value
-    if annotation is bool:
-        return value.lower() in {"1", "true", "yes"}
-    if annotation is int:
-        numeric_value = float(value)
-        if not numeric_value.is_integer():
-            raise ValueError(f"Expected an integer XML value, got {value!r}")
-        return int(numeric_value)
-    if annotation is float:
-        return float(value)
-    return value
-
-
-class XMLStructure:
-    """
-    A base class for XML structures that can be created from an XML element.
-    """
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    name: str             # the name of the GPU or coprocessor
+    available_ram: int    # the available RAM on the GPU or coprocessor
 
     @classmethod
-    def from_xml(cls, xml_element: ET.Element):
+    def from_xml(cls, xml_element: ET.Element) -> "Coproc":
         """
-        Create an instance of the class from an XML element, mapping the child elements to the class attributes.
+        Create an instance of Coproc from an XML element.
 
         Parameters
         ----------
@@ -82,42 +36,17 @@ class XMLStructure:
 
         Returns
         -------
-        cls
-            An instance of the class with attributes populated from the XML element.
+        Coproc
+            An instance of Coproc with attributes populated from the XML element.
         """
-        field_names = set(getattr(cls, '__dataclass_fields__', {}))
-        type_hints = get_type_hints(cls)
-        kwargs = {
-            child.tag: _convert_xml_value(child.text, type_hints[child.tag])
-            for child in xml_element
-            if child.tag in field_names
-        }
-        return cls(**kwargs)
-
-    def __repr__(self) -> str:
-        """
-        Return a string representation of the object, showing its class name and attributes.
-
-        Returns
-        -------
-        str
-            A string representation of the object.
-        """
-        attrs = ', '.join(f"{k}={v!r}" for k, v in self.__dict__.items())
-        return f"{self.__class__.__name__}({attrs})"
+        return cls(
+            name = xml_element.findtext('name', default=''),
+            available_ram = int(float(xml_element.findtext('available_ram', default='0')))
+        )
 
 
 @dataclass
-class Coproc(XMLStructure):
-    """
-    A class to represent a coprocessor (e.g., GPU) from the BOINC client.
-    """
-    name: str             # the name of the GPU or coprocessor
-    available_ram: int    # the available RAM on the GPU or coprocessor
-
-
-@dataclass
-class HostInfo(XMLStructure):
+class HostInfo:
     """
     A class to represent the host information from the BOINC client.
     """
@@ -150,14 +79,15 @@ class HostInfo(XMLStructure):
             Coproc.from_xml(c)
             for c in coprocs_element.findall('coproc_cuda')] \
             if coprocs_element is not None else []
-        field_names = set(getattr(cls, '__dataclass_fields__', {}))
-        type_hints = get_type_hints(cls)
-        kwargs = {
-            child.tag: _convert_xml_value(child.text, type_hints[child.tag])
-            for child in xml_element
-            if child.tag != 'coprocs' and child.tag in field_names
-        }
-        return cls(coprocs=coprocs, **kwargs)
+        return cls(
+            domain_name = xml_element.findtext('domain_name', default=''),
+            ip_addr = xml_element.findtext('ip_addr', default=''),
+            p_ncpus = int(xml_element.findtext('p_ncpus', default='0')),
+            p_vendor = xml_element.findtext('p_vendor', default=''),
+            p_model = xml_element.findtext('p_model', default=''),
+            os_version = xml_element.findtext('os_version', default=''),
+            coprocs=coprocs
+        )
 
     def display(self, logger: logging.Logger | None = None) -> None:
         """
@@ -187,7 +117,7 @@ class HostInfo(XMLStructure):
 
 
 @dataclass
-class ProjectInfo(XMLStructure):
+class ProjectInfo:
     """
     A class to represent the project information from the BOINC client.
     """
@@ -209,6 +139,40 @@ class ProjectInfo(XMLStructure):
     team_name: str | None = None               # the name of the team associated with the project
     team_total_credit: float | None = None     # the total credit earned by the team in the project
     team_expavg_credit: float | None = None    # the exponentially averaged credit for the team in the project
+
+    # Task information (optional, may not be present in all replies)
+    tasks: list["TaskInfo"] | None = None  # a list of tasks associated with the project, if any
+
+    @classmethod
+    def from_xml(cls, xml_element: ET.Element) -> "ProjectInfo":
+        """
+        Create an instance of ProjectInfo from an XML element, with special handling for optional team fields.
+
+        Parameters
+        ----------
+        xml_element : ET.Element
+            The XML element to parse.
+
+        Returns
+        -------
+        ProjectInfo
+            An instance of ProjectInfo with attributes populated from the XML element.
+        """
+        return cls(
+            project_name = xml_element.findtext('project_name', default=''),
+            master_url = xml_element.findtext('master_url', default=''),
+            user_name = xml_element.findtext('user_name', default=''),
+            user_total_credit = float(xml_element.findtext('user_total_credit', default='0.0')),
+            user_expavg_credit = float(xml_element.findtext('user_expavg_credit', default='0.0')),
+            hostid = xml_element.findtext('hostid', default=''),
+            host_total_credit = float(xml_element.findtext('host_total_credit', default='0.0')),
+            host_expavg_credit = float(xml_element.findtext('host_expavg_credit', default='0.0')),
+            team_name = xml_element.findtext('team_name', default=None),
+            team_total_credit = float(xml_element.findtext('team_total_credit', default='0.0')) \
+                if xml_element.find('team_total_credit') is not None else None,
+            team_expavg_credit = float(xml_element.findtext('team_expavg_credit', default='0.0')) \
+                if xml_element.find('team_expavg_credit') is not None else None,
+        )
 
     def display(self, logger: logging.Logger | None = None) -> None:
         """
@@ -235,16 +199,41 @@ class ProjectInfo(XMLStructure):
             print(f"Team Name: {self.team_name}")
             print(f"Team Total Credit: {self.team_total_credit}")
             print(f"Team Expavg Credit: {self.team_expavg_credit}")
+        if self.tasks:
+            print(f"Number of Tasks: {len(self.tasks)}")
+            for task in self.tasks:
+                task.display(logger=logger)
 
 
 @dataclass
-class ActiveTask(XMLStructure):
+class ActiveTask:
     """
     A class to represent an active task from the BOINC client.
     """
     active_task_state: int       # the current state of the task (e.g., "running", "ready_to_report")
     fraction_done: float         # the fraction of the task that is completed (0.0 to 1.0)
     elapsed_time: float          # the elapsed time for the task in seconds
+
+    @classmethod    
+    def from_xml(cls, xml_element: ET.Element) -> "ActiveTask":
+        """
+        Create an instance of ActiveTask from an XML element.
+
+        Parameters
+        ----------
+        xml_element : ET.Element
+            The XML element to parse.
+
+        Returns
+        -------
+        ActiveTask
+            An instance of ActiveTask with attributes populated from the XML element.
+        """
+        return cls(
+            active_task_state = int(xml_element.findtext('active_task_state', default='0')),
+            fraction_done = float(xml_element.findtext('fraction_done', default='0.0')),
+            elapsed_time = float(xml_element.findtext('elapsed_time', default='0.0'))
+        ) 
 
     def display(self, logger: logging.Logger | None = None) -> None:
         """
@@ -265,7 +254,7 @@ class ActiveTask(XMLStructure):
 
 
 @dataclass
-class TaskInfo(XMLStructure):
+class TaskInfo:
     """
     A class to represent the task information from the BOINC client.
     """
@@ -293,14 +282,14 @@ class TaskInfo(XMLStructure):
         """
         active_task_element = xml_element.find('active_task')
         active_task = ActiveTask.from_xml(active_task_element) if active_task_element is not None else None
-        field_names = set(getattr(cls, '__dataclass_fields__', {}))
-        type_hints = get_type_hints(cls)
-        kwargs = {
-            child.tag: _convert_xml_value(child.text, type_hints[child.tag])
-            for child in xml_element
-            if child.tag != 'active_task' and child.tag in field_names
-        }
-        return cls(active_task=active_task, **kwargs)
+        return cls(
+            name = xml_element.findtext('name', default=''),
+            wu_name = xml_element.findtext('wu_name', default=''),
+            project_url = xml_element.findtext('project_url', default=''),
+            estimated_cpu_time_remaining = float(xml_element.findtext('estimated_cpu_time_remaining', default='0.0')),
+            report_deadline = float(xml_element.findtext('report_deadline', default='0.0')),
+            active_task = active_task
+        )
 
     def display(self, logger: logging.Logger | None = None) -> None:
         """
@@ -359,7 +348,9 @@ def parse_projects(client_state: ET.Element) -> list[ProjectInfo]:
     client_state = _get_client_state(client_state)
     projects = []
     for project in client_state.findall('project'):
-        projects.append(ProjectInfo.from_xml(project))
+        project_info = ProjectInfo.from_xml(project)
+        project_info.tasks = parse_tasks(client_state, project_url=project_info.master_url)
+        projects.append(project_info)
     return projects
 
 
@@ -404,11 +395,8 @@ def parse_tasks(client_state: ET.Element, project_url: str) -> list[TaskInfo]:
     tasks = []
     for task in client_state.findall('result'):
         task_info = TaskInfo.from_xml(task)
-        try:
-            if task_info.project_url == project_url:
-                tasks.append(task_info)
-        except AttributeError:  # no project_url attribute in task_info
-            pass
+        if task_info.project_url == project_url:
+            tasks.append(task_info)
     return tasks
 
 
@@ -427,22 +415,10 @@ def summarise_state(reply: ET.Element) -> dict:
         A dictionary containing the host information and a list of projects with their associated tasks.
     """
     client_state = _get_client_state(reply)
-    summary = {}
-
-    host_info = parse_host_info(client_state)
-    summary["host_info"] = host_info
-
-    projects = parse_projects(client_state)
-    proj_list = []
-    for project in projects:
-        tasks = parse_tasks(client_state, project_url=project.master_url)
-        proj_list.append({
-            "project_info": project,
-            "tasks": tasks
-        })
-    summary["projects"] = proj_list
-    return summary
-
+    return {
+        "host_info": parse_host_info(client_state),
+        "projects": parse_projects(client_state)
+    }
 
 
 if __name__ == "__main__":
@@ -465,6 +441,4 @@ if __name__ == "__main__":
 
     # Display the project information and associated tasks
     for proj in summary["projects"]:
-        proj["project_info"].display(logger=logger)
-        for task in proj["tasks"]:
-            task.display(logger=logger)
+        proj.display(logger=logger)
