@@ -9,6 +9,10 @@ to include additional fields as needed.
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+from .logger import get_logger
+
+logger = get_logger("boinc-fleet.parse")
+
 
 class XMLStructure:
     """
@@ -21,7 +25,7 @@ class XMLStructure:
     @classmethod
     def from_xml(cls, xml_element: ET.Element):
         """
-        Create an instance of the class from an XML element.
+        Create an instance of the class from an XML element, mapping the child elements to the class attributes.
 
         Parameters
         ----------
@@ -30,12 +34,18 @@ class XMLStructure:
 
         Returns
         -------
-        An instance of the class with attributes populated from the XML element.
+        cls
+            An instance of the class with attributes populated from the XML element.
         """
-        kwargs = {child.tag: child.text for child in xml_element}
+        field_names = set(getattr(cls, '__dataclass_fields__', {}))
+        kwargs = {
+            child.tag: child.text
+            for child in xml_element
+            if child.tag in field_names
+        }
         return cls(**kwargs)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
         Return a string representation of the object, showing its class name and attributes.
 
@@ -71,7 +81,7 @@ class HostInfo(XMLStructure):
     coprocs: list[Coproc | None]    # List of coprocessors (e.g., GPUs) with their details
 
     @classmethod
-    def from_xml(cls, xml_element: ET.Element):
+    def from_xml(cls, xml_element: ET.Element) -> "HostInfo":
         """
         Create an instance of HostInfo from an XML element, with special handling for the <coproc> elements.
 
@@ -85,12 +95,18 @@ class HostInfo(XMLStructure):
         HostInfo
             An instance of HostInfo with attributes populated from the XML element.
         """
-        try:
-            coprocs = [Coproc.from_xml(c) for c in xml_element.findall('coproc')]
-        except AttributeError as e:
-            raise ValueError(f"Error parsing <coproc> elements: {e}."
-                             f"\nXML: {ET.tostring(xml_element, encoding='unicode')}")
-        kwargs = {child.tag: child.text for child in xml_element if child.tag != 'coprocs'}
+        coprocs_element = xml_element.find('coprocs')
+        # todo: handle other coproc types (e.g., OpenCL, Vulkan) if needed
+        coprocs = [
+            Coproc.from_xml(c)
+            for c in coprocs_element.findall('coproc_cuda')] \
+            if coprocs_element is not None else []
+        field_names = set(getattr(cls, '__dataclass_fields__', {}))
+        kwargs = {
+            child.tag: child.text
+            for child in xml_element
+            if child.tag != 'coprocs' and child.tag in field_names
+        }
         return cls(coprocs=coprocs, **kwargs)
 
 
@@ -99,17 +115,24 @@ class ProjectInfo(XMLStructure):
     """
     A class to represent the project information from the BOINC client.
     """
+    # Project information
     project_name: str            # the name of the project
     master_url: str              # the URL of the project's master server
+
+    # User information (one user per project, may have many hosts)
     user_name: str               # the name of the user associated with the project
-    team_name: str               # the name of the team associated with the project
-    hostid: str                  # the unique identifier for the host in the project
     user_total_credit: float     # the total credit earned by the user in the project
     user_expavg_credit: float    # the exponentially averaged credit for the user in the project
-    team_total_credit: float     # the total credit earned by the team in the project
-    team_expavg_credit: float    # the exponentially averaged credit for the team in the project
-    host_total_credit: float     # the total credit earned by the host in the project
+
+    # Host information (identifies a specific machine associated with a user)
+    hostid: str                  # the unique identifier for the host in the project
+    host_total_credit: float   # the total credit earned by the host in the project
     host_expavg_credit: float    # the exponentially averaged credit for the host in the project
+
+    # Team information (optional, may not be present in all replies)
+    team_name: str | None = None               # the name of the team associated with the project
+    team_total_credit: float | None = None     # the total credit earned by the team in the project
+    team_expavg_credit: float | None = None    # the exponentially averaged credit for the team in the project
 
 
 @dataclass
@@ -137,7 +160,7 @@ class TaskInfo(XMLStructure):
     active_task: ActiveTask | None         # the active task details, if any
 
     @classmethod
-    def from_xml(cls, xml_element: ET.Element):
+    def from_xml(cls, xml_element: ET.Element) -> "TaskInfo":
         """
         Create an instance of TaskInfo from an XML element, with special handling for the <active_task> element.
 
@@ -153,8 +176,31 @@ class TaskInfo(XMLStructure):
         """
         active_task_element = xml_element.find('active_task')
         active_task = ActiveTask.from_xml(active_task_element) if active_task_element is not None else None
-        kwargs = {child.tag: child.text for child in xml_element if child.tag != 'active_task'}
+        field_names = set(getattr(cls, '__dataclass_fields__', {}))
+        kwargs = {
+            child.tag: child.text
+            for child in xml_element
+            if child.tag != 'active_task' and child.tag in field_names
+        }
         return cls(active_task=active_task, **kwargs)
+
+
+def _get_client_state(reply: ET.Element) -> ET.Element:
+    """
+    Return the <client_state> element from a BOINC reply or itself.
+    
+    Parameters
+    ----------
+    reply : ET.Element
+        The XML element representing the BOINC reply.
+    
+    Returns
+    -------
+    ET.Element
+        The <client_state> element if present, otherwise the original reply element.
+    """
+    client_state = reply.find('client_state')
+    return client_state if client_state is not None else reply
 
 
 def parse_projects(client_state: ET.Element) -> list[ProjectInfo]:
@@ -171,6 +217,7 @@ def parse_projects(client_state: ET.Element) -> list[ProjectInfo]:
     list of ProjectInfo
         A list of ProjectInfo objects, each representing a project with its details.
     """
+    client_state = _get_client_state(client_state)
     projects = []
     for project in client_state.findall('project'):
         projects.append(ProjectInfo.from_xml(project))
@@ -191,7 +238,10 @@ def parse_host_info(client_state: ET.Element) -> HostInfo:
     HostInfo
         An instance of HostInfo with attributes populated from the XML element.
     """
+    client_state = _get_client_state(client_state)
     host_info_element = client_state.find('host_info')
+    if host_info_element is None:
+        raise ValueError("<host_info> not found in BOINC reply")
     return HostInfo.from_xml(host_info_element)
 
 
@@ -208,14 +258,18 @@ def parse_tasks(client_state: ET.Element, project_url: str) -> list[TaskInfo]:
 
     Returns
     -------
-    list of dict
-        A list of dictionaries, each representing a task with its details.
+    list of TaskInfo
+        A list of TaskInfo objects, each representing a task with its details.
     """
+    client_state = _get_client_state(client_state)
     tasks = []
     for task in client_state.findall('task'):
         task_info = TaskInfo.from_xml(task)
-        if task_info.project_url == project_url:
-            tasks.append(task_info)
+        try:
+            if task_info.project_url == project_url:
+                tasks.append(task_info)
+        except AttributeError:  # no project_url attribute in task_info
+            pass
     return tasks
 
 
