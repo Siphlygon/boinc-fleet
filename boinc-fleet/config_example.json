@@ -1,0 +1,11 @@
+{
+  "poll_interval": 5,
+  "timeout": 5,
+  "default_password": "PUT-SHARED-RPC-PASSWORD-HERE",
+  "nodes": [
+    { "name": "workstation",  "host": "192.168.1.10", "port": 31456 },
+    { "name": "media-server", "host": "192.168.1.20", "port": 31456 },
+    { "name": "old-laptop",   "host": "192.168.1.30", "port": 31456, "password": "per-node-password-if-different" },
+    { "name": "this-machine", "host": "127.0.0.1",    "port": 31456 }
+  ]
+}
