@@ -9,47 +9,61 @@ from pathlib import Path
 from . import parse, rpc
 from .logger import get_logger
 
+# Path to the index.html file which will be served when accessing the root path of the server
+_INDEX_HTML = Path(__file__).parent / "static" / "index.html"
+
 logger = get_logger("boinc-fleet.server")
 
 class BOINCRequestHandler(http.server.BaseHTTPRequestHandler):
     """
-    A request handler for the BOINC HTTP server. It handles GET requests to fetch summary information from the BOINC
-    client.
+    A GET request handler for the BOINC HTTP server.
     """
 
     def do_GET(self):
         """
-        Handles GET requests to the server. It doesn't support any paths other than /api/nodes, and will return a 404
-        error for unsupported paths. For the supported path, it fetches the summary information from the BOINC client
-        and returns it as a JSON response
+        Handles GET requests to the server.
+        
+        Supports paths for "/api/nodes" to fetch summary information from the BOINC client and "/" or "/index.html" to
+        serve a simple web page. Returns a 404 error for unsupported paths.
         """
-        # This is a simple server; only one return on the expected /api/nodes path
-        if self.path != "/api/nodes":
-            self.send_response(404)
-            self.end_headers()
-            logger.debug("Not Found")
-            self.wfile.write(b'Not Found')
-            return
+        # Handle the /api/nodes path to fetch summary information from the BOINC client
+        if self.path == "/api/nodes":
+            # Read information locally or use standards
+            host = "127.0.0.1"
+            port = 31416
+            password = Path("/var/lib/boinc-client/gui_rpc_auth.cfg").read_text().strip()
+            try:
+                summary = fetch_summary(host, port, password)
+                response = jsonify_summary(summary)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b'Error fetching summary.')
+                logger.error(f"Error fetching summary: {e}")
+                return
 
-        # Read information locally or use standards
-        host = "127.0.0.1"
-        port = 31416
-        password = Path("/var/lib/boinc-client/gui_rpc_auth.cfg").read_text().strip()
-
-        try:
-            summary = fetch_summary(host, port, password)
-            response = jsonify_summary(summary)
+        # Serve the web page for the index.html, which will display the summary information in a user-friendly format
+        if self.path in ["/", "/index.html"]:
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
+            self.send_header('Content-Type', 'text/html')
             self.end_headers()
-            self.wfile.write(response)
-        except Exception as e:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(b'Error fetching summary.')
-            logger.error(f"Error fetching summary: {e}")
+            # OPen and send the HTML file
+            with open(_INDEX_HTML, 'r') as f:
+                self.wfile.write(f.read().encode('utf-8'))
             return
+
+        # Otherwise, we have an unsupported path
+        self.send_response(404)
+        self.end_headers()
+        logger.debug("Not Found")
+        self.wfile.write(b'Path Not Found')
+        return
 
 
 def fetch_summary(host: str, port: int, password: str) -> dict:
@@ -101,8 +115,10 @@ def jsonify_summary(summary: dict) -> bytes:
 
 def main():
     """
-    Starts the BOINC HTTP server on the specified host and port. The server will handle incoming GET requests to fetch
-    summary information from the BOINC client.
+    Starts the BOINC HTTP server on the specified host and port.
+    
+    The server will handle incoming GET requests to fetch summary information from the BOINC client or be served a
+    simple web page. It will run indefinitely until interrupted.
     """
     server_address = ('', 8000)  # Listen on all interfaces, port 8000
     httpd = http.server.ThreadingHTTPServer(server_address, BOINCRequestHandler)
