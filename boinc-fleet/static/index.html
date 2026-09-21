@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    .bar { background:#ddd; height:10px; }          /* the track */
+    .bar > span { display:block; background:#3a7; height:100%; }  /* the fill */
+  </style>
+</head>
+<body>
+  <div id="app">Loading…</div>            <!-- empty box; JS will fill it -->
+
+  <script>
+    async function refresh() {
+      const response = await fetch("/api/nodes");   // standard GET request to the API
+      const data = await response.json();           // JSON text -> a JS object
+
+      const host = data.host_info;
+      let html = `<h1>${host.domain_name} — ${host.p_ncpus} CPUs</h1>`;
+
+      for (const project of data.projects) {
+        html += `<h2>${project.project_name}</h2>`;
+        for (const task of (project.tasks || [])) {
+          const pct = (task.active_task ? task.active_task.fraction_done * 100 : 0).toFixed(1);
+          html += `<div>${task.name} — ${pct}%
+                     <div class="bar"><span style="width:${pct}%"></span></div>
+                   </div>`;
+        }
+      }
+
+      document.getElementById("app").innerHTML = html;   // data becomes visible
+    }
+
+    refresh();                    // run once now
+    setInterval(refresh, 2000);   // ...then every 2s as a "live" page
+  </script>
+</body>
+</html>
